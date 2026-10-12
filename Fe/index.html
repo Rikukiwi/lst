@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hệ thống WebGIS AI Dự báo Nhiệt độ Bề mặt Đất (LST) - TP.HCM</title>
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="navbar">
+    <div class="nav-brand">
+      <div class="logo-icon"><i class="fa-solid fa-satellite-dish"></i></div>
+      <div class="brand-text">
+        <h1>WebGIS AI - LST TP.HCM</h1>
+        <p>Hệ thống Dự báo Nhiệt độ Bề mặt Đất Chuỗi Thời Gian</p>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="tab-map">
+        <i class="fa-solid fa-map-location-dot"></i> Bản đồ WebGIS
+      </button>
+      <button class="nav-tab" data-tab="tab-models">
+        <i class="fa-solid fa-brain"></i> Mô hình & Đánh giá
+      </button>
+      <button class="nav-tab" data-tab="tab-datasets">
+        <i class="fa-solid fa-database"></i> Dữ liệu & Tiền xử lý
+      </button>
+      <button class="nav-tab" data-tab="tab-train">
+        <i class="fa-solid fa-gear"></i> Huấn luyện AI
+      </button>
+    </nav>
+
+    <!-- User Section -->
+    <div class="user-profile">
+      <div class="avatar"><i class="fa-solid fa-user-astronaut"></i></div>
+      <div class="user-info">
+        <span class="user-name" id="user-display">Chuyên gia AI (expert_ai)</span>
+        <span class="user-role badge-role">CHUYÊN GIA</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    
+    <!-- TAB 1: BẢN ĐỒ WEBGIS -->
+    <section class="tab-pane active" id="tab-map">
+      <!-- Sidebar Control Panel -->
+      <aside class="gis-sidebar">
+        <!-- Quick Stats -->
+        <div class="stats-card">
+          <div class="stat-item">
+            <span class="stat-lbl"><i class="fa-solid fa-temperature-arrow-up"></i> LST Max</span>
+            <span class="stat-val text-danger" id="stat-max">-- °C</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-lbl"><i class="fa-solid fa-temperature-arrow-down"></i> LST Min</span>
+            <span class="stat-val text-info" id="stat-min">-- °C</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-lbl"><i class="fa-solid fa-temperature-half"></i> LST Trung bình</span>
+            <span class="stat-val text-warning" id="stat-avg">-- °C</span>
+          </div>
+        </div>
+
+        <!-- Controls Form -->
+        <div class="filter-box">
+          <h3 class="section-title"><i class="fa-solid fa-sliders"></i> Tùy chọn Hiển thị</h3>
+          
+          <div class="form-group">
+            <label for="select-mode"><i class="fa-solid fa-layer-group"></i> Chế độ Dữ liệu:</label>
+            <select id="select-mode" class="custom-select">
+              <option value="forecast" selected>🔮 Dữ liệu Dự báo AI (Tương lai)</option>
+              <option value="historical">🛰️ Dữ liệu Viễn thám Thực tế (2021-2025)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="select-model-filter"><i class="fa-solid fa-microchip"></i> Mô hình Dự báo:</label>
+            <select id="select-model-filter" class="custom-select">
+              <option value="all">Tất cả mô hình tốt nhất (GCN-LSTM & XGBoost)</option>
+              <option value="GCN-LSTM">GCN-LSTM (Deep Spatial-Temporal)</option>
+              <option value="XGBoost">XGBoost Boosting</option>
+              <option value="Random Forest">Random Forest</option>
+              <option value="ARIMA">ARIMA Statistical</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="select-region"><i class="fa-solid fa-draw-polygon"></i> Phạm vi Khu vực:</label>
+            <select id="select-region" class="custom-select">
+              <option value="all">Toàn bộ TP. Hồ Chí Minh</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="select-date"><i class="fa-regular fa-calendar-days"></i> Mốc thời gian:</label>
+            <select id="select-date" class="custom-select"></select>
+          </div>
+
+          <!-- Time Slider -->
+          <div class="slider-wrapper">
+            <div class="slider-header">
+              <span>Chuỗi thời gian</span>
+              <span id="slider-date-label" class="badge-date">--</span>
+            </div>
+            <input type="range" id="time-slider" min="0" max="5" value="0" class="time-range" />
+            <div class="playback-controls">
+              <button id="btn-play-pause" class="btn btn-sm btn-outline"><i class="fa-solid fa-play"></i> Tự động chạy</button>
+            </div>
+          </div>
+
+          <!-- Layer Toggles -->
+          <div class="layer-toggles">
+            <label class="toggle-item">
+              <input type="checkbox" id="chk-boundary" checked />
+              <span>Ranh giới hành chính</span>
+            </label>
+            <label class="toggle-item">
+              <input type="checkbox" id="chk-stations" checked />
+              <span>Điểm quan trắc & Dự báo</span>
+            </label>
+            <label class="toggle-item">
+              <input type="checkbox" id="chk-heat" checked />
+              <span>Lớp phủ nhiệt nội suy (Isotherm Heatmap)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Legend / Thước nhiệt độ -->
+        <div class="legend-card">
+          <h4>Thang Nhiệt độ Bề mặt Đất (LST °C)</h4>
+          <div class="gradient-bar"></div>
+          <div class="gradient-labels">
+            <span>&lt; 28°C (Mát)</span>
+            <span>32°C</span>
+            <span>35°C</span>
+            <span>&gt; 38°C (Rất nóng)</span>
+          </div>
+        </div>
+
+        <!-- Selected Point Details -->
+        <div class="point-detail-card" id="point-details">
+          <h4><i class="fa-solid fa-circle-info"></i> Thông tin Vị trí Click</h4>
+          <div id="point-info-content" class="info-content">
+            <p class="placeholder-text">Click vào một điểm hoặc khu vực trên bản đồ để xem chi tiết LST, NDVI, lượng mưa và độ ẩm.</p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Map Canvas -->
+      <div class="gis-map-container">
+        <div id="map"></div>
+        <div class="map-overlay-badge" id="map-status-badge">
+          <i class="fa-solid fa-satellite"></i> Đang hiển thị: <span id="overlay-date-text">--</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: MÔ HÌNH & SO SÁNH ĐÁNH GIÁ (MODEL_METRIC) -->
+    <section class="tab-pane" id="tab-models">
+      <div class="dashboard-grid">
+        <div class="card full-width">
+          <div class="card-header">
+            <h2><i class="fa-solid fa-chart-line"></i> Bảng Tổng hợp và So sánh Chỉ số Mô hình AI (Kiểm tra - Test Set)</h2>
+            <p>Đánh giá theo 4 chỉ số khoa học: MAE (°C), RMSE (°C), R² (độ phù hợp) và MAPE (%)</p>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="data-table" id="table-model-metrics">
+                <thead>
+                  <tr>
+                    <th>Xếp hạng</th>
+                    <th>Mô hình</th>
+                    <th>Loại thuật toán</th>
+                    <th>MAE (°C)</th>
+                    <th>RMSE (°C)</th>
+                    <th>R²</th>
+                    <th>MAPE (%)</th>
+                    <th>Đánh giá</th>
+                  </tr>
+                </thead>
+                <tbody id="metrics-tbody">
+                  <!-- Render dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-award"></i> Mô hình Khuyến nghị</h3>
+          </div>
+          <div class="card-body">
+            <div class="best-model-banner">
+              <div class="badge-best">TỐT NHẤT</div>
+              <h3>GCN-LSTM (Graph Convolutional LSTM)</h3>
+              <p>Mô hình học sâu kết hợp quan hệ không gian giữa các quận lân cận (GCN) và phụ thuộc chuỗi thời gian (LSTM) đạt sai số thấp nhất (RMSE: <strong>1.23°C</strong>, R²: <strong>0.90</strong>).</p>
+            </div>
+            <div class="model-desc-box">
+              <div class="desc-item">
+                <strong>XGBoost:</strong> Hiệu suất rất cao trên dữ liệu bảng dạng đặc trưng kết hợp NDVI và độ ẩm.
+              </div>
+              <div class="desc-item">
+                <strong>Random Forest:</strong> Ổn định, ít bị overfitting nhưng xử lý chuỗi thời gian dài kém hơn LSTM.
+              </div>
+              <div class="desc-item">
+                <strong>ARIMA:</strong> Mô hình thống kê cơ bản, phù hợp chuỗi tuyến tính đơn giản, sai số cao hơn khi biến động bất thường.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-clock-rotate-left"></i> Lịch sử các lần Huấn luyện (Training Runs)</h3>
+          </div>
+          <div class="card-body">
+            <div class="run-history-list" id="training-runs-list">
+              <!-- Render dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: DỮ LIỆU & TIỀN XỬ LÝ (DATASET & TIEN_XU_LY) -->
+    <section class="tab-pane" id="tab-datasets">
+      <div class="dashboard-grid">
+        <div class="card">
+          <div class="card-header">
+            <h2><i class="fa-solid fa-folder-open"></i> Danh mục Bộ dữ liệu LST (DATASET)</h2>
+          </div>
+          <div class="card-body">
+            <div class="dataset-list" id="datasets-container">
+              <!-- Render dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2><i class="fa-solid fa-filter"></i> Cấu hình Tiền xử lý Dữ liệu (TIEN_XU_LY)</h2>
+          </div>
+          <div class="card-body">
+            <form id="form-preprocessing" class="custom-form">
+              <div class="form-group">
+                <label>Bộ dữ liệu áp dụng:</label>
+                <select id="txl-dataset" class="custom-select"></select>
+              </div>
+              <div class="form-group">
+                <label>Cách xử lý dữ liệu thiếu (Mây che/Lỗi cảm biến):</label>
+                <select id="txl-missing" class="custom-select">
+                  <option value="Nội suy tuyến tính theo thời gian" selected>Nội suy tuyến tính (Linear Interpolation)</option>
+                  <option value="Nội suy không gian Kriging/IDW">Nội suy không gian lân cận (Spatial IDW/Kriging)</option>
+                  <option value="Loại bỏ bản ghi thiếu">Loại bỏ (Drop NA)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Cách xử lý dữ liệu nhiễu (Outliers):</label>
+                <select id="txl-noise" class="custom-select">
+                  <option value="Lọc ngưỡng IQR và phân vị [0.01, 0.99]" selected>Khoảng tứ phân vị IQR (Interquartile Range)</option>
+                  <option value="Z-score (|z| > 3.0)">Ngưỡng độ lệch chuẩn Z-score (|z| > 3)</option>
+                  <option value="Ngưỡng nhiệt độ vật lý (15°C - 55°C)">Ngưỡng hợp lý khí hậu (15°C - 55°C)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Phương pháp chuẩn hóa thang đo:</label>
+                <select id="txl-norm" class="custom-select">
+                  <option value="Min-Max" selected>Min-Max Scaling [0, 1] (Khuyên dùng cho LSTM)</option>
+                  <option value="Z-score">Z-score Standardization (Mean=0, Std=1)</option>
+                  <option value="Khong">Không chuẩn hóa (Phù hợp Random Forest/XGBoost)</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label>Mốc kết thúc Train (70%):</label>
+                  <input type="date" id="txl-train-end" class="custom-input" value="2023-12-31" />
+                </div>
+                <div class="form-group col-6">
+                  <label>Mốc kết thúc Val (15%):</label>
+                  <input type="date" id="txl-val-end" class="custom-input" value="2024-12-31" />
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Lưu Cấu hình Tiền xử lý</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card full-width">
+          <div class="card-header">
+            <h3><i class="fa-solid fa-table"></i> Bảng Xem trước Dữ liệu LST (LST_DATA)</h3>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="data-table" id="table-lst-preview">
+                <thead>
+                  <tr>
+                    <th>Mã LST</th>
+                    <th>Thời gian</th>
+                    <th>Kinh độ (X)</th>
+                    <th>Vĩ độ (Y)</th>
+                    <th>LST (°C)</th>
+                    <th>NDVI</th>
+                    <th>Lượng mưa (mm)</th>
+                    <th>Độ ẩm đất (%)</th>
+                    <th>Lớp phủ</th>
+                  </tr>
+                </thead>
+                <tbody id="lst-preview-tbody">
+                  <!-- Render dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: HUẤN LUYỆN MÔ HÌNH MỚI -->
+    <section class="tab-pane" id="tab-train">
+      <div class="dashboard-grid">
+        <div class="card">
+          <div class="card-header">
+            <h2><i class="fa-solid fa-rocket"></i> Khởi tạo Huấn luyện Mô hình AI Mới</h2>
+            <p>Chọn mô hình, bộ dữ liệu và thiết lập siêu tham số để chạy dự báo.</p>
+          </div>
+          <div class="card-body">
+            <form id="form-train" class="custom-form">
+              <div class="form-group">
+                <label>Chọn Mô hình AI:</label>
+                <select id="train-model" class="custom-select"></select>
+              </div>
+              <div class="form-group">
+                <label>Bộ dữ liệu LST:</label>
+                <select id="train-dataset" class="custom-select"></select>
+              </div>
+              <div class="form-group">
+                <label>Cấu hình Tiền xử lý:</label>
+                <select id="train-txl" class="custom-select"></select>
+              </div>
+
+              <!-- Hyperparameters dynamic box -->
+              <div class="hyperparam-box">
+                <h4><i class="fa-solid fa-sliders"></i> Siêu tham số (Hyperparameters):</h4>
+                <div class="form-row" id="hyperparams-fields">
+                  <!-- Auto filled based on model -->
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-success btn-lg" id="btn-submit-train">
+                <i class="fa-solid fa-play"></i> Bắt đầu Huấn luyện & Đánh giá
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2><i class="fa-solid fa-terminal"></i> Nhật ký Thực thi AI (Console Logs)</h2>
+          </div>
+          <div class="card-body">
+            <div class="console-box" id="train-console">
+              <p class="log-info">[Sẵn sàng] Hệ thống AI Engine đang chờ lệnh huấn luyện...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Main JS -->
+  <script src="js/app.js"></script>
+</body>
+</html>
