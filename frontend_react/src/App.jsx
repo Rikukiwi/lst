@@ -50,7 +50,7 @@ export default function App({ initialTab = 'gis', onHome }) {
   const [showObservation, setShowObservation] = useState(true);
   const [showForecast, setShowForecast] = useState(true);
   const [showDistricts, setShowDistricts] = useState(true);
-  const [showProvinces, setShowProvinces] = useState(true);
+  const [showProvinces, setShowProvinces] = useState(false);
   const [geoProvinces, setGeoProvinces] = useState(null);
   const [geoDistricts, setGeoDistricts] = useState(null);
 
@@ -77,7 +77,18 @@ export default function App({ initialTab = 'gis', onHome }) {
   // Load real administrative boundaries (static GeoJSON in /public/geo)
   useEffect(() => {
     fetch('/geo/provinces.geojson').then(r => r.json()).then(setGeoProvinces).catch(() => {});
-    fetch('/geo/hcm_districts.geojson').then(r => r.json()).then(setGeoDistricts).catch(() => {});
+    // 168 phường/xã/đặc khu (sau sáp nhập) lấy từ bảng khu_vuc -> FeatureCollection
+    fetch(`${API_BASE}/khu-vuc?cha=HCM&geometry=true`)
+      .then(r => r.json())
+      .then(rows => setGeoDistricts({
+        type: 'FeatureCollection',
+        features: rows.filter(k => k.geojson).map(k => ({
+          type: 'Feature',
+          geometry: k.geojson,
+          properties: { name: k.ten_khu_vuc, ma: k.ma_khu_vuc, loai: k.loai_khu_vuc, dien_tich_km2: k.dien_tich_km2 }
+        }))
+      }))
+      .catch(() => {});
   }, []);
 
   // Fetch initial system data
@@ -160,10 +171,14 @@ export default function App({ initialTab = 'gis', onHome }) {
         attributionControl: false
       });
 
-      // Esri World Dark Gray Base Tiles (Clean, professional, no watermark)
-      L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 16,
-        attribution: 'Esri, HERE, Garmin, OpenStreetMap'
+      // Nền bản đồ sáng: Esri Light Gray (dự phòng) + CARTO Voyager (hiển thị phía trên)
+      L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 16
+      }).addTo(map);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        attribution: '© OpenStreetMap, © CARTO'
       }).addTo(map);
 
       // Custom Zoom Control top right
@@ -212,16 +227,17 @@ export default function App({ initialTab = 'gis', onHome }) {
 
     const layer = L.geoJSON(geoDistricts, {
       pane: 'districtPane',
-      style: { color: '#22d3ee', weight: 1, opacity: 0.85, fillColor: '#06b6d4', fillOpacity: 0.08 },
+      style: { color: '#0e7490', weight: 1, opacity: 0.9, fillColor: '#06b6d4', fillOpacity: 0.07 },
       onEachFeature: (f, lyr) => {
-        const kv = khuVucList.find(k => k.ten_khu_vuc === f.properties.name);
-        lyr.bindTooltip(`<b>${f.properties.name}</b>`, { className: 'glass-panel', sticky: true });
-        lyr.on('mouseover', () => lyr.setStyle({ fillOpacity: 0.3, weight: 2 }));
-        lyr.on('mouseout', () => lyr.setStyle({ fillOpacity: 0.08, weight: 1 }));
+        const p = f.properties;
+        const loaiTxt = { PHUONG: 'Phường', XA: 'Xã', DAC_KHU: 'Đặc khu' }[p.loai] || p.loai;
+        lyr.bindTooltip(`<b>${p.name}</b><br/>${loaiTxt}`, { className: 'glass-panel', sticky: true });
+        lyr.on('mouseover', () => lyr.setStyle({ fillOpacity: 0.28, weight: 2 }));
+        lyr.on('mouseout', () => lyr.setStyle({ fillOpacity: 0.07, weight: 1 }));
         lyr.on('click', () => setSelectedDistrict({
           ten_khu_vuc: f.properties.name,
-          loai_khu_vuc: kv?.loai_khu_vuc || 'Quận/Huyện thuộc TP.HCM',
-          mo_ta: kv?.mo_ta || 'Ranh giới hành chính cấp quận/huyện (geoBoundaries).'
+          loai_khu_vuc: loaiTxt,
+          mo_ta: `Mã: ${p.ma}` + (p.dien_tich_km2 ? ` · Diện tích: ${Number(p.dien_tich_km2).toFixed(2)} km²` : '')
         }));
       }
     });
@@ -427,7 +443,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                       checked={showDistricts}
                       onChange={e => setShowDistricts(e.target.checked)}
                     />
-                    <span>Ranh giới Quận/Huyện TP.HCM</span>
+                    <span>Ranh giới Phường/Xã/Đặc khu (168 đơn vị)</span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px', cursor: 'pointer' }}>
                     <input
@@ -435,7 +451,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                       checked={showProvinces}
                       onChange={e => setShowProvinces(e.target.checked)}
                     />
-                    <span>Ranh giới Tỉnh (TP.HCM & lân cận)</span>
+                    <span>Ranh giới Tỉnh cũ (tham chiếu)</span>
                   </label>
                 </div>
               </div>
@@ -474,7 +490,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                   <div className="metrics-grid">
                     <div className="metric-box">
                       <div className="metric-name">LST Trung Bình</div>
-                      <div className="metric-val" style={{ color: '#facc15' }}>{currentDateInfo.avg_lst || '--'}°C</div>
+                      <div className="metric-val" style={{ color: '#ca8a04' }}>{currentDateInfo.avg_lst || '--'}°C</div>
                     </div>
                     <div className="metric-box">
                       <div className="metric-name">LST Cực Đại</div>
@@ -486,7 +502,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                     </div>
                     <div className="metric-box">
                       <div className="metric-name">Điểm trạm</div>
-                      <div className="metric-val" style={{ color: '#22d3ee' }}>{currentDateInfo.points_count || 12}</div>
+                      <div className="metric-val" style={{ color: '#0891b2' }}>{currentDateInfo.points_count || 12}</div>
                     </div>
                   </div>
                 </div>
@@ -504,7 +520,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                     </span>
                     <button
                       onClick={() => setSelectedPoint(null)}
-                      style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
                     >
                       ✕
                     </button>
@@ -554,13 +570,13 @@ export default function App({ initialTab = 'gis', onHome }) {
                     </span>
                     <button
                       onClick={() => setSelectedDistrict(null)}
-                      style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
                     >
                       ✕
                     </button>
                   </div>
                   <div className="card-body">
-                    <h3 style={{ fontSize: '15px', color: '#ffffff', marginBottom: '4px' }}>{selectedDistrict.ten_khu_vuc}</h3>
+                    <h3 style={{ fontSize: '15px', color: 'var(--text-main)', marginBottom: '4px' }}>{selectedDistrict.ten_khu_vuc}</h3>
                     <div style={{ fontSize: '11px', color: 'var(--accent-sky)', marginBottom: '10px' }}>{selectedDistrict.loai_khu_vuc}</div>
                     <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
                       {selectedDistrict.mo_ta}
@@ -628,7 +644,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                     </button>
                     <div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Mốc thời gian quan trắc:</div>
-                      <div style={{ fontSize: '15px', fontWeight: 700, color: '#22d3ee', fontFamily: 'JetBrains Mono' }}>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: '#0891b2', fontFamily: 'JetBrains Mono' }}>
                         {currentDateInfo.thoi_gian}
                       </div>
                     </div>
@@ -745,13 +761,13 @@ export default function App({ initialTab = 'gis', onHome }) {
 
               {/* Data Split Architecture Card */}
               <div className="glass-panel" style={{ padding: '16px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff', marginBottom: '8px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '8px' }}>
                   Phân chia Dữ liệu Huấn luyện & Kiểm định
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
                   Hệ thống tuân thủ nghiêm ngặt nguyên tắc chuỗi thời gian (Chronological Split):
                   <div style={{ display: 'flex', gap: '8px', margin: '10px 0' }}>
-                    <div style={{ flex: 7, background: 'rgba(34, 211, 238, 0.2)', padding: '6px', borderRadius: '4px', textAlign: 'center', fontSize: '11px', color: '#22d3ee' }}>
+                    <div style={{ flex: 7, background: 'rgba(34, 211, 238, 0.2)', padding: '6px', borderRadius: '4px', textAlign: 'center', fontSize: '11px', color: '#0891b2' }}>
                       Train (70%)
                     </div>
                     <div style={{ flex: 1.5, background: 'rgba(245, 158, 11, 0.2)', padding: '6px', borderRadius: '4px', textAlign: 'center', fontSize: '11px', color: '#f59e0b' }}>
@@ -780,13 +796,13 @@ export default function App({ initialTab = 'gis', onHome }) {
                     </span>
                   </div>
                   <div className="card-body">
-                    <h4 style={{ fontSize: '13px', color: '#ffffff', marginBottom: '12px' }}>
+                    <h4 style={{ fontSize: '13px', color: 'var(--text-main)', marginBottom: '12px' }}>
                       Kết quả 4 Chỉ số Đánh giá Hiệu năng (Performance Metrics):
                     </h4>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                       {/* Validation Metrics */}
-                      <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                      <div style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                         <div style={{ fontSize: '12px', fontWeight: 700, color: '#f59e0b', marginBottom: '8px' }}>
                           Tập Kiểm định (Validation Set)
                         </div>
@@ -815,7 +831,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                       </div>
 
                       {/* Test Metrics */}
-                      <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                      <div style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                         <div style={{ fontSize: '12px', fontWeight: 700, color: '#10b981', marginBottom: '8px' }}>
                           Tập Kiểm tra Độc lập (Test Set)
                         </div>
@@ -848,7 +864,7 @@ export default function App({ initialTab = 'gis', onHome }) {
               ) : (
                 <div className="glass-panel" style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
                   <Cpu size={48} color="#22d3ee" style={{ margin: '0 auto 16px', opacity: 0.6 }} />
-                  <h3 style={{ fontSize: '16px', color: '#ffffff', marginBottom: '8px' }}>Phòng Thí nghiệm Mô hình AI LST TP.HCM</h3>
+                  <h3 style={{ fontSize: '16px', color: 'var(--text-main)', marginBottom: '8px' }}>Phòng Thí nghiệm Mô hình AI LST TP.HCM</h3>
                   <p style={{ fontSize: '13px', maxWidth: '480px', margin: '0 auto', lineHeight: '1.6' }}>
                     Chọn một trong 4 thuật toán: <b>ARIMA</b>, <b>Random Forest</b>, <b>XGBoost</b>, hoặc <b>GCN-LSTM</b> và bấm nút huấn luyện để kích hoạt quá trình tiền xử lý, huấn luyện trực tiếp và đo đạc 4 độ đo (MAE, RMSE, R², MAPE).
                   </p>
@@ -935,7 +951,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                       const isGCN = row.ten_model === 'GCN-LSTM';
                       return (
                         <tr key={idx} style={{ background: isGCN ? 'rgba(6, 182, 212, 0.05)' : 'transparent' }}>
-                          <td style={{ fontWeight: 700, color: isGCN ? 'var(--accent-sky)' : '#ffffff' }}>
+                          <td style={{ fontWeight: 700, color: isGCN ? 'var(--accent-cyan)' : 'var(--text-main)' }}>
                             {row.ten_model} {isGCN && '🏆 (Tốt nhất)'}
                           </td>
                           <td style={{ color: 'var(--text-muted)' }}>{row.loai_model}</td>
@@ -966,7 +982,7 @@ export default function App({ initialTab = 'gis', onHome }) {
             {/* Scientific Analysis Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
               <div className="glass-panel" style={{ padding: '16px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: '#22d3ee' }}>ARIMA</div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#0891b2' }}>ARIMA</div>
                 <div style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '4px 0 10px' }}>Thống kê cổ điển</div>
                 <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
                   Phù hợp cho chuỗi đơn biến tại 1 trạm. Nhược điểm: không tận dụng được tương quan không gian giữa các quận lân cận và biến phụ trợ (NDVI, mưa).
@@ -1062,7 +1078,7 @@ export default function App({ initialTab = 'gis', onHome }) {
 
             {/* 10 Entities Schema Summary */}
             <div className="glass-panel" style={{ padding: '20px' }}>
-              <h3 style={{ fontSize: '15px', color: '#ffffff', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '15px', color: 'var(--text-main)', marginBottom: '12px' }}>
                 Cấu trúc 10 Thực thể Quản lý trong Cơ sở Dữ liệu PostGIS:
               </h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px' }}>
@@ -1078,7 +1094,7 @@ export default function App({ initialTab = 'gis', onHome }) {
                   { name: 'forecast_result', desc: 'Kết quả dự báo nhiệt độ LST tương lai' },
                   { name: 'map_layer', desc: 'Lớp bản đồ WebGIS GeoJSON & Raster' },
                 ].map((ent, i) => (
-                  <div key={i} style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  <div key={i} style={{ background: 'var(--bg-inset)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                     <div style={{ fontFamily: 'JetBrains Mono', fontWeight: 700, fontSize: '12px', color: 'var(--accent-sky)' }}>
                       {i + 1}. {ent.name}
                     </div>
