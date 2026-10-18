@@ -115,40 +115,42 @@ def get_users():
 # 2. KHU VỰC HÀNH CHÍNH & RANH GIỚI (KHU_VUC)
 # ==========================================
 @app.get("/api/khu-vuc", tags=["Khu vực & Ranh giới WebGIS"])
-def get_khu_vuc():
-    rows = db.query("""
-        SELECT ma_khu_vuc, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, mo_ta,
-               CASE 
-                   WHEN ranh_gioi IS NOT NULL THEN 
-                       CASE WHEN typeof(ranh_gioi) = 'text' THEN ranh_gioi ELSE ST_AsGeoJSON(ranh_gioi) END
-                   ELSE NULL 
-               END as geojson
-        FROM khu_vuc
-        ORDER BY ma_khu_vuc
-    """,
-    """
-        SELECT ma_khu_vuc, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, mo_ta, ranh_gioi as geojson
-        FROM khu_vuc
-        ORDER BY ma_khu_vuc
-    """)
-    
+def get_khu_vuc(
+    loai: Optional[str] = Query(None, description="THANH_PHO | PHUONG | XA | DAC_KHU"),
+    cha: Optional[str] = Query(None, description="ma_khu_vuc cha, vd 'HCM' để lấy 168 đơn vị cấp xã"),
+    geometry: bool = Query(False, description="true: kèm ranh giới GeoJSON (nặng với 168 đơn vị)"),
+):
+    """Danh sách khu vực hành chính: TP.HCM (sau sáp nhập) và các phường/xã/đặc khu."""
+    cols = "ma_khu_vuc, ma_hanh_chinh, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, dien_tich_km2"
+    geo_pg = ", ST_AsGeoJSON(ranh_gioi) AS geojson" if geometry else ""
+    geo_sqlite = ", ranh_gioi AS geojson" if geometry else ""
+
+    where, params = [], []
+    if loai:
+        params.append(loai)
+        where.append(f"loai_khu_vuc = ${len(params)}")
+    if cha:
+        params.append(cha)
+        where.append(f"ma_khu_vuc_cha = ${len(params)}")
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    order_sql = " ORDER BY (ma_khu_vuc_cha IS NOT NULL), ten_khu_vuc"
+
+    rows = db.query(
+        f"SELECT {cols}{geo_pg} FROM khu_vuc{where_sql}{order_sql}",
+        f"SELECT {cols}{geo_sqlite} FROM khu_vuc{where_sql}{order_sql}",
+        params=tuple(params),
+    )
+
     results = []
     for r in rows:
-        geo = r.get("geojson")
-        parsed_geo = None
-        if geo:
+        item = {k: r.get(k) for k in ("ma_khu_vuc", "ma_hanh_chinh", "ten_khu_vuc", "loai_khu_vuc", "ma_khu_vuc_cha", "dien_tich_km2")}
+        if geometry:
+            geo = r.get("geojson")
             try:
-                parsed_geo = json.loads(geo) if isinstance(geo, str) else geo
+                item["geojson"] = json.loads(geo) if isinstance(geo, str) else geo
             except Exception:
-                parsed_geo = None
-        results.append({
-            "ma_khu_vuc": r["ma_khu_vuc"],
-            "ten_khu_vuc": r["ten_khu_vuc"],
-            "loai_khu_vuc": r["loai_khu_vuc"],
-            "ma_khu_vuc_cha": r["ma_khu_vuc_cha"],
-            "mo_ta": r["mo_ta"],
-            "geojson": parsed_geo
-        })
+                item["geojson"] = None
+        results.append(item)
     return results
 
 # ==========================================
@@ -334,17 +336,30 @@ def trigger_training(req: TrainingRequest):
     
     df = pd.DataFrame(rows)
 
-    # 3. Preprocessing
-    prep = LSTPreprocessor()
+    # 3. Preprocessing — mốc chia train/val/test lấy từ bảng tien_xu_ly của dataset
+    txl_rows = db.query(
+        "SELECT * FROM tien_xu_ly WHERE ma_dataset = $1 ORDER BY ma_tien_xu_ly DESC LIMIT 1",
+        "SELECT * FROM tien_xu_ly WHERE ma_dataset = ? ORDER BY ma_tien_xu_ly DESC LIMIT 1",
+        (req.ma_dataset,)
+    )
+    txl = txl_rows[0] if txl_rows else {}
+    ma_tien_xu_ly = txl.get("ma_tien_xu_ly")
+    train_end_date = str(txl.get("ngay_ket_thuc_train") or "2023-12-31")
+    val_end_date = str(txl.get("ngay_ket_thuc_val") or "2024-12-31")
+
+    prep = LSTPreprocessor(train_end_date=train_end_date, val_end_date=val_end_date)
     df_clean, _ = prep.handle_missing(df)
     df_clean, _ = prep.handle_outliers(df_clean)
 
-    # 4. Execute Model Training
+    # 4. Execute Model Training (cả 4 mô hình dùng CHUNG mốc thời gian chia dữ liệu)
     hyper_params = req.tham_so or {}
     start_time = datetime.now()
-    
+
     try:
-        train_res = run_model_training(model_name, df_clean, hyper_params)
+        train_res = run_model_training(
+            model_name, df_clean, hyper_params,
+            train_end_date=train_end_date, val_end_date=val_end_date
+        )
         val_m = train_res["val_metrics"]
         test_m = train_res["test_metrics"]
     except Exception as e:
@@ -355,14 +370,14 @@ def trigger_training(req: TrainingRequest):
     # 5. Insert Training Run record
     run_id = db.execute_insert(
         """
-        INSERT INTO training_run (ma_dataset, ma_model, ma_nguoi_dung, trang_thai, tham_so, thoi_gian_bat_dau, thoi_gian_ket_thuc)
-        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ma_training
+        INSERT INTO training_run (ma_dataset, ma_tien_xu_ly, ma_model, ma_nguoi_dung, trang_thai, tham_so, thoi_gian_bat_dau, thoi_gian_ket_thuc)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ma_training
         """,
         """
-        INSERT INTO training_run (ma_dataset, ma_model, ma_nguoi_dung, trang_thai, tham_so, thoi_gian_bat_dau, thoi_gian_ket_thuc)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO training_run (ma_dataset, ma_tien_xu_ly, ma_model, ma_nguoi_dung, trang_thai, tham_so, thoi_gian_bat_dau, thoi_gian_ket_thuc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (req.ma_dataset, req.ma_model, 2, "HOAN_THANH", json.dumps(hyper_params), start_time.strftime("%Y-%m-%d %H:%M:%S"), end_time.strftime("%Y-%m-%d %H:%M:%S"))
+        (req.ma_dataset, ma_tien_xu_ly, req.ma_model, 2, "HOAN_THANH", json.dumps(hyper_params), start_time.strftime("%Y-%m-%d %H:%M:%S"), end_time.strftime("%Y-%m-%d %H:%M:%S"))
     )
 
     # 6. Insert Validation & Test metrics
@@ -427,7 +442,7 @@ def get_metrics_comparison():
 @app.get("/api/forecast", tags=["Dự báo LST & Bản đồ WebGIS"])
 def get_forecast(
     ma_training: Optional[int] = None,
-    ma_khu_vuc: Optional[int] = None,
+    ma_khu_vuc: Optional[str] = None,
     thoi_gian: Optional[str] = None
 ):
     query_str = """
@@ -444,10 +459,11 @@ def get_forecast(
         query_str += f" AND f.ma_training = ${idx}"
         params.append(ma_training)
         idx += 1
-    if ma_khu_vuc and ma_khu_vuc != 1:  # 1 is all HCM
-        query_str += f" AND f.ma_khu_vuc = ${idx}"
-        params.append(ma_khu_vuc)
-        idx += 1
+    if ma_khu_vuc and ma_khu_vuc != "HCM":  # 'HCM' = toàn thành phố, không lọc
+        # Khu vực được chọn, hoặc các đơn vị con của nó (vd chọn cấp trên -> gồm các xã/phường trực thuộc)
+        query_str += f" AND (f.ma_khu_vuc = ${idx} OR kv.ma_khu_vuc_cha = ${idx + 1})"
+        params.extend([ma_khu_vuc, ma_khu_vuc])
+        idx += 2
     if thoi_gian:
         query_str += f" AND f.thoi_gian_du_bao = ${idx}"
         params.append(thoi_gian)

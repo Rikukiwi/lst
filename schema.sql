@@ -51,13 +51,18 @@ CREATE TABLE dataset (
 CREATE INDEX idx_dataset_nguoi_dung ON dataset (ma_nguoi_dung);
 
 -- 3. KHU_VUC
+-- Ranh giới TP.HCM sau sáp nhập + 168 đơn vị hành chính cấp xã (nạp từ SHP/GeoJSON
+-- bằng backend_python/import_khu_vuc.py hoặc QGIS/ogr2ogr).
+-- ma_khu_vuc: 'HCM' cho thành phố; đơn vị cấp xã: <LOAI>_<MA_DVHC>, vd 'PHUONG_26734'.
+-- loai_khu_vuc: THANH_PHO | PHUONG | XA | DAC_KHU
 CREATE TABLE khu_vuc (
-    ma_khu_vuc      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    ten_khu_vuc     VARCHAR(100) NOT NULL,
-    loai_khu_vuc    VARCHAR(30)  NOT NULL,
-    ma_khu_vuc_cha  BIGINT,
+    ma_khu_vuc      VARCHAR(50)  PRIMARY KEY,
+    ma_hanh_chinh   VARCHAR(20)  UNIQUE,
+    ten_khu_vuc     VARCHAR(255) NOT NULL,
+    loai_khu_vuc    VARCHAR(50)  NOT NULL,
+    ma_khu_vuc_cha  VARCHAR(50),
+    dien_tich_km2   DOUBLE PRECISION,
     ranh_gioi       geometry(MultiPolygon, 4326),
-    mo_ta           TEXT,
     CONSTRAINT fk_khu_vuc_cha FOREIGN KEY (ma_khu_vuc_cha)
         REFERENCES khu_vuc (ma_khu_vuc) ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT ck_khu_vuc_khong_tu_cha CHECK (ma_khu_vuc_cha IS NULL OR ma_khu_vuc_cha <> ma_khu_vuc)
@@ -167,7 +172,7 @@ CREATE INDEX idx_metric_training ON model_metric (ma_training);
 CREATE TABLE forecast_result (
     ma_du_bao           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ma_training         BIGINT NOT NULL,
-    ma_khu_vuc          BIGINT NOT NULL,
+    ma_khu_vuc          VARCHAR(50) NOT NULL,
     thoi_gian_du_bao    DATE   NOT NULL,
     vi_do               DOUBLE PRECISION NOT NULL,
     kinh_do             DOUBLE PRECISION NOT NULL,
@@ -188,7 +193,7 @@ CREATE INDEX idx_fr_geom        ON forecast_result USING GIST (geom);
 CREATE TABLE map_layer (
     ma_layer           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ma_training        BIGINT       NOT NULL,
-    ma_khu_vuc         BIGINT       NOT NULL,
+    ma_khu_vuc         VARCHAR(50)  NOT NULL,
     ten_layer          VARCHAR(100) NOT NULL,
     thoi_gian          DATE,
     duong_dan_du_lieu  VARCHAR(255),
@@ -235,20 +240,12 @@ INSERT INTO model (ten_model, loai_model, mo_ta, trang_thai) OVERRIDING SYSTEM V
 ('XGBoost', 'HOC_MAY', 'Mô hình tăng cường độ dốc Extreme Gradient Boosting trên dữ liệu bảng', 'HOAT_DONG'),
 ('GCN-LSTM', 'HOC_SAU', 'Mạng kết hợp đồ thị tích chập không gian và bộ nhớ dài ngắn hạn theo chuỗi thời gian', 'HOAT_DONG');
 
--- Khu vực hành chính TP.HCM cơ bản (cấp tỉnh + các quận/huyện tiêu biểu)
-INSERT INTO khu_vuc (ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, ranh_gioi, mo_ta) VALUES
-('Thành phố Hồ Chí Minh', 'Thành phố', NULL, 
- ST_Multi(ST_GeomFromText('POLYGON((106.35 10.35, 107.03 10.35, 107.03 11.16, 106.35 11.16, 106.35 10.35))', 4326)), 'Toàn thành phố Hồ Chí Minh'),
-('Thành phố Thủ Đức', 'Thành phố trực thuộc', 1, 
- ST_Multi(ST_GeomFromText('POLYGON((106.72 10.78, 106.88 10.78, 106.88 10.90, 106.72 10.90, 106.72 10.78))', 4326)), 'Khu đô thị sáng tạo phía Đông'),
-('Quận 1', 'Quận', 1, 
- ST_Multi(ST_GeomFromText('POLYGON((106.68 10.76, 106.71 10.76, 106.71 10.79, 106.68 10.79, 106.68 10.76))', 4326)), 'Khu vực trung tâm thương mại hành chính'),
-('Quận 7', 'Quận', 1, 
- ST_Multi(ST_GeomFromText('POLYGON((106.69 10.71, 106.76 10.71, 106.76 10.76, 106.69 10.76, 106.69 10.71))', 4326)), 'Khu đô thị mới Nam Sài Gòn'),
-('Quận Bình Thạnh', 'Quận', 1, 
- ST_Multi(ST_GeomFromText('POLYGON((106.68 10.79, 106.73 10.79, 106.73 10.84, 106.68 10.84, 106.68 10.79))', 4326)), 'Khu vực bán đảo Thanh Đa và cửa ngõ Đông Bắc'),
-('Huyện Cần Giờ', 'Huyện', 1, 
- ST_Multi(ST_GeomFromText('POLYGON((106.75 10.35, 107.03 10.35, 107.03 10.65, 106.75 10.65, 106.75 10.35))', 4326)), 'Khu dự trữ sinh quyển rừng ngập mặn');
+-- Khu vực: chỉ tạo bản ghi gốc 'HCM' với ranh giới tạm (hình chữ nhật).
+-- Ranh giới thật + 168 đơn vị cấp xã nạp bằng: python import_khu_vuc.py <file.geojson>
+-- (script sẽ thay ranh giới 'HCM' bằng phần hợp nhất của các xã/phường).
+INSERT INTO khu_vuc (ma_khu_vuc, ma_hanh_chinh, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, ranh_gioi) VALUES
+('HCM', '79', 'Thành phố Hồ Chí Minh', 'THANH_PHO', NULL,
+ ST_Multi(ST_GeomFromText('POLYGON((106.35 10.35, 107.03 10.35, 107.03 11.16, 106.35 11.16, 106.35 10.35))', 4326)));
 
 -- Dataset mẫu
 INSERT INTO dataset (ma_nguoi_dung, ten_dataset, mo_ta, nguon_du_lieu, thoi_gian_bat_dau, thoi_gian_ket_thuc, trang_thai) VALUES

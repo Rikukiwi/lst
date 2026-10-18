@@ -144,18 +144,17 @@ def seed_database():
             u
         )
 
-    # 2. KHU_VUC
-    for idx, d in enumerate(DISTRICTS, 1):
-        geojson = {
-            "type": "Polygon",
-            "coordinates": [d["coords"]]
-        }
-        geojson_str = json.dumps(geojson)
-        db.query(
-            "INSERT INTO khu_vuc (ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, mo_ta, ranh_gioi) VALUES ($1, $2, $3, $4, ST_Multi(ST_GeomFromGeoJSON($5))) ON CONFLICT DO NOTHING",
-            "INSERT OR IGNORE INTO khu_vuc (ma_khu_vuc, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, mo_ta, ranh_gioi) VALUES (?, ?, ?, ?, ?, ?)",
-            (idx, d["name"], d["type"], d["parent"], d["desc"], geojson_str) if not db.use_postgres else (d["name"], d["type"], d["parent"], d["desc"], geojson_str)
-        )
+    # 2. KHU_VUC — chỉ tạo bản ghi gốc 'HCM' với ranh giới tạm.
+    # Ranh giới thật + 168 xã/phường nạp bằng: python import_khu_vuc.py <file.geojson>
+    root = DISTRICTS[0]
+    root_geojson = json.dumps({"type": "Polygon", "coordinates": [root["coords"]]})
+    db.query(
+        "INSERT INTO khu_vuc (ma_khu_vuc, ma_hanh_chinh, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, ranh_gioi) "
+        "VALUES ($1, $2, $3, $4, NULL, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($5), 4326))) ON CONFLICT (ma_khu_vuc) DO NOTHING",
+        "INSERT OR IGNORE INTO khu_vuc (ma_khu_vuc, ma_hanh_chinh, ten_khu_vuc, loai_khu_vuc, ma_khu_vuc_cha, ranh_gioi) "
+        "VALUES (?, ?, ?, ?, NULL, ?)",
+        ("HCM", "79", "Thành phố Hồ Chí Minh", "THANH_PHO", root_geojson)
+    )
 
     # 3. DATASET
     datasets = [
@@ -275,14 +274,14 @@ def seed_database():
                 db.query(
                     "INSERT INTO forecast_result (ma_training, ma_khu_vuc, thoi_gian_du_bao, vi_do, kinh_do, gia_tri_lst_du_bao) VALUES ($1, $2, $3, $4, $5, $6)",
                     "INSERT INTO forecast_result (ma_training, ma_khu_vuc, thoi_gian_du_bao, vi_do, kinh_do, gia_tri_lst_du_bao) VALUES (?, ?, ?, ?, ?, ?)",
-                    (4, p["khu_vuc_id"], f_date, p["lat"], p["lng"], pred_lst)
+                    (4, "HCM", f_date, p["lat"], p["lng"], pred_lst)
                 )
 
         # MAP_LAYER
         layers = [
-            (4, 1, "Bản đồ LST Dự báo TP.HCM - Tháng 03/2026 (GCN-LSTM)", "2026-03-15", "/layers/hcm_lst_forecast_20260315.geojson", "GeoJSON", "Lớp nhiệt độ bề mặt đất cực đại mùa khô TP.HCM dự báo bởi mô hình GCN-LSTM"),
-            (4, 1, "Bản đồ LST Dự báo TP.HCM - Tháng 04/2026 (GCN-LSTM)", "2026-04-15", "/layers/hcm_lst_forecast_20260415.geojson", "GeoJSON", "Lớp nhiệt độ bề mặt đất đỉnh điểm nắng nóng UHI"),
-            (3, 1, "Bản đồ LST Dự báo TP.HCM - Tháng 03/2026 (XGBoost)", "2026-03-15", "/layers/hcm_lst_forecast_xgb_20260315.geojson", "GeoJSON", "Lớp dự báo bằng mô hình XGBoost Regressor")
+            (4, "HCM", "Bản đồ LST Dự báo TP.HCM - Tháng 03/2026 (GCN-LSTM)", "2026-03-15", "/layers/hcm_lst_forecast_20260315.geojson", "GeoJSON", "Lớp nhiệt độ bề mặt đất cực đại mùa khô TP.HCM dự báo bởi mô hình GCN-LSTM"),
+            (4, "HCM", "Bản đồ LST Dự báo TP.HCM - Tháng 04/2026 (GCN-LSTM)", "2026-04-15", "/layers/hcm_lst_forecast_20260415.geojson", "GeoJSON", "Lớp nhiệt độ bề mặt đất đỉnh điểm nắng nóng UHI"),
+            (3, "HCM", "Bản đồ LST Dự báo TP.HCM - Tháng 03/2026 (XGBoost)", "2026-03-15", "/layers/hcm_lst_forecast_xgb_20260315.geojson", "GeoJSON", "Lớp dự báo bằng mô hình XGBoost Regressor")
         ]
         for lyr in layers:
             db.query(

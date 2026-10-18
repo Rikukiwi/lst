@@ -120,10 +120,30 @@ class DatabaseManager:
             conn.commit()
             return cur.lastrowid
 
+    @staticmethod
+    def _migrate_khu_vuc_sqlite(cur):
+        """
+        DB SQLite cũ có khu_vuc khoá số (10 ô chữ nhật vẽ tay, không có ma_hanh_chinh).
+        Bỏ bảng cũ để tạo lại theo cấu trúc mới; forecast_result/map_layer đang trỏ id số
+        được gán về 'HCM' (import_khu_vuc.py sẽ gán lại theo toạ độ sau khi nạp ranh giới thật).
+        """
+        cols = [r[1] for r in cur.execute("PRAGMA table_info(khu_vuc)").fetchall()]
+        if not cols or "ma_hanh_chinh" in cols:
+            return
+        cur.execute("DROP TABLE khu_vuc")
+        for tbl in ("forecast_result", "map_layer"):
+            exists = cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+            ).fetchone()
+            if exists:
+                cur.execute(f"UPDATE {tbl} SET ma_khu_vuc = 'HCM'")
+        print("Đã migrate bảng khu_vuc (SQLite) sang cấu trúc mới.")
+
     def _init_sqlite(self):
         """Initialize SQLite tables matching the 10 entities"""
         with self.get_sqlite_connection() as conn:
             cur = conn.cursor()
+            self._migrate_khu_vuc_sqlite(cur)
             cur.executescript("""
             CREATE TABLE IF NOT EXISTS nguoi_dung (
                 ma_nguoi_dung INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,13 +166,15 @@ class DatabaseManager:
                 ngay_tao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- Ranh giới TP.HCM + 168 đơn vị cấp xã. ranh_gioi lưu GeoJSON (text) khi chạy SQLite.
             CREATE TABLE IF NOT EXISTS khu_vuc (
-                ma_khu_vuc INTEGER PRIMARY KEY AUTOINCREMENT,
+                ma_khu_vuc TEXT PRIMARY KEY,
+                ma_hanh_chinh TEXT UNIQUE,
                 ten_khu_vuc TEXT NOT NULL,
                 loai_khu_vuc TEXT NOT NULL,
-                ma_khu_vuc_cha INTEGER,
-                ranh_gioi TEXT,
-                mo_ta TEXT
+                ma_khu_vuc_cha TEXT REFERENCES khu_vuc(ma_khu_vuc),
+                dien_tich_km2 REAL,
+                ranh_gioi TEXT
             );
 
             CREATE TABLE IF NOT EXISTS lst_data (
@@ -213,7 +235,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS forecast_result (
                 ma_du_bao INTEGER PRIMARY KEY AUTOINCREMENT,
                 ma_training INTEGER NOT NULL,
-                ma_khu_vuc INTEGER,
+                ma_khu_vuc TEXT,
                 thoi_gian_du_bao TEXT NOT NULL,
                 vi_do REAL NOT NULL,
                 kinh_do REAL NOT NULL,
@@ -223,7 +245,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS map_layer (
                 ma_layer INTEGER PRIMARY KEY AUTOINCREMENT,
                 ma_training INTEGER,
-                ma_khu_vuc INTEGER,
+                ma_khu_vuc TEXT,
                 ten_layer TEXT NOT NULL,
                 thoi_gian TEXT,
                 duong_dan_du_lieu TEXT,
